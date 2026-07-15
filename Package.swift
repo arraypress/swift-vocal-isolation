@@ -25,6 +25,8 @@ let package = Package(
                 .copy("Fixtures/stft_recon.bin"),
                 .copy("Fixtures/e2e_chunk.bin"),
                 .copy("Fixtures/e2e_vocal.bin"),
+                .copy("Fixtures/dereverb_chunk.bin"),
+                .copy("Fixtures/dereverb_dry.bin"),
             ]
         ),
     ]
