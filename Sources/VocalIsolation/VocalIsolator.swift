@@ -98,7 +98,12 @@ public struct VocalIsolator {
             let left = paddedChunk(stereo[0], start: s, length: C, valid: valid)
             let right = paddedChunk(stereo[1], start: s, length: C, valid: valid)
             let (spec, frames) = stft.forward([left, right])
-            guard let stems = try? model.predict(spec) else { continue }
+            guard let stems = try? model.predict(spec) else {
+                // A dead chunk = silence in the output; still advance the
+                // progress bar so a rare failure doesn't look like a hang.
+                progress?(Double(index + 1) / Double(starts.count))
+                continue
+            }
 
             let stemSize = VocalModel.specChannels * VocalModel.dimF * VocalModel.frames
             let vocalSpec = Array(stems[0..<stemSize])          // stem 0 = vocal

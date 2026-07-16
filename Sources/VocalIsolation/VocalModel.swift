@@ -23,15 +23,27 @@ final class VocalModel {
     /// Loads a compiled `.mlmodelc`, or compiles an `.mlpackage`/`.mlmodel` on
     /// the fly and loads that.
     init(modelURL: URL) throws {
-        let url: URL
-        if modelURL.pathExtension == "mlmodelc" {
-            url = modelURL
-        } else {
-            url = try MLModel.compileModel(at: modelURL)
-        }
+        let url = try Self.compiledURL(for: modelURL)
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .all
         self.model = try MLModel(contentsOf: url, configuration: configuration)
+    }
+
+    /// Compiles once and caches in Caches/ keyed by name + mtime — compiling
+    /// the .mlpackage on EVERY Music Mode run cost seconds each time.
+    static func compiledURL(for modelURL: URL) throws -> URL {
+        if modelURL.pathExtension == "mlmodelc" { return modelURL }
+        let fm = FileManager.default
+        let mtime = (try? fm.attributesOfItem(atPath: modelURL.path)[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let dir = try fm.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("swift-vocal-isolation/CompiledModels", isDirectory: true)
+        let dst = dir.appendingPathComponent("\(modelURL.deletingPathExtension().lastPathComponent)-\(Int(mtime)).mlmodelc")
+        if fm.fileExists(atPath: dst.path) { return dst }
+        let compiled = try MLModel.compileModel(at: modelURL)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fm.removeItem(at: dst)
+        try fm.moveItem(at: compiled, to: dst)
+        return dst
     }
 
     /// `spec` is `[4, 4096, 256]` (row-major); returns `[8, 4096, 256]`.
