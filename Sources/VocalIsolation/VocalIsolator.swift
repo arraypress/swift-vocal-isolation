@@ -69,7 +69,7 @@ public struct VocalIsolator {
                       Self.resample(stereo[1], from: sampleRate, to: Self.modelRate)]
         }
 
-        let (vocal, instrumental) = separateAt44k(stereo, progress: progress)
+        let (vocal, instrumental) = try separateAt44k(stereo, progress: progress)
 
         // Back to the input rate.
         if sampleRate != Self.modelRate {
@@ -80,7 +80,17 @@ public struct VocalIsolator {
         return Stems(vocal: vocal, instrumental: instrumental, sampleRate: sampleRate)
     }
 
-    private func separateAt44k(_ stereo: [[Float]], progress: ((Double) -> Void)?) -> (vocal: [[Float]], instrumental: [[Float]]) {
+    /// Throws `CancellationError` if the calling task is cancelled part-way.
+    ///
+    /// The check has to live *here*, per chunk. This is the only loop in the pass, so a caller
+    /// that wraps `separate` in a `Task` and cancels it has no other point of leverage: without
+    /// this, cancelling a five-minute track keeps every core busy until the whole separation
+    /// finishes, and the caller's own `Task.checkCancellation()` only runs once it is already
+    /// too late to matter.
+    ///
+    /// Outside a task context `Task.isCancelled` is simply `false`, so synchronous callers are
+    /// unaffected.
+    private func separateAt44k(_ stereo: [[Float]], progress: ((Double) -> Void)?) throws -> (vocal: [[Float]], instrumental: [[Float]]) {
         let C = Self.chunk, hop = C / Self.overlap
         let n = stereo[0].count
         var window = [Float](repeating: 0, count: C)
@@ -94,6 +104,7 @@ public struct VocalIsolator {
         if starts.isEmpty { starts = [0] }
 
         for (index, s) in starts.enumerated() {
+            try Task.checkCancellation()
             let valid = min(C, n - s)
             let left = paddedChunk(stereo[0], start: s, length: C, valid: valid)
             let right = paddedChunk(stereo[1], start: s, length: C, valid: valid)

@@ -59,7 +59,7 @@ public struct DeReverb {
                       VocalIsolator.resample(stereo[1], from: sampleRate, to: Self.modelRate)]
         }
 
-        let (dry, reverb) = processAt44k(stereo, progress: progress)
+        let (dry, reverb) = try processAt44k(stereo, progress: progress)
 
         if sampleRate != Self.modelRate {
             let d = [VocalIsolator.resample(dry[0], from: Self.modelRate, to: sampleRate),
@@ -79,7 +79,11 @@ public struct DeReverb {
 
     // MARK: - Core (mirror of VocalIsolator.separateAt44k; stem 0 = dry)
 
-    private func processAt44k(_ stereo: [[Float]], progress: ((Double) -> Void)?) -> (dry: [[Float]], reverb: [[Float]]) {
+    /// Throws `CancellationError` if the calling task is cancelled part-way — see the note on
+    /// `VocalIsolator.separateAt44k`. De-reverb is a second full-length pass, so a cancel that
+    /// only landed between the two stages would still leave the user waiting out the whole of
+    /// this one.
+    private func processAt44k(_ stereo: [[Float]], progress: ((Double) -> Void)?) throws -> (dry: [[Float]], reverb: [[Float]]) {
         let C = Self.chunk, hop = C / Self.overlap
         let n = stereo[0].count
         var window = [Float](repeating: 0, count: C)
@@ -93,6 +97,7 @@ public struct DeReverb {
         if starts.isEmpty { starts = [0] }
 
         for (index, s) in starts.enumerated() {
+            try Task.checkCancellation()
             let valid = min(C, n - s)
             let left = paddedChunk(stereo[0], start: s, length: C, valid: valid)
             let right = paddedChunk(stereo[1], start: s, length: C, valid: valid)
