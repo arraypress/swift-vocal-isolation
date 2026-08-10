@@ -63,3 +63,9 @@ swift test
 
 The STFT/ISTFT tests run anywhere (bundled golden fixtures). The end-to-end
 pipeline test is skipped unless a local model is present.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Bundled or downloaded models keep their own licences; see the notes above where a model is named.
