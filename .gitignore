@@ -12,3 +12,6 @@ Tools/*.mlpackage
 Tools/*.pt
 Tools/*.wav
 Tools/*.npy
+Tools/.venv/
+Tools/__pycache__/
+Tools/mel_band_roformer.mlpackage/
