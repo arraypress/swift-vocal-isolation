@@ -85,6 +85,40 @@ So the stems are upstream's to the float noise floor. The asset is published at
 [huggingface.co/arraypress/stems-demucs](https://huggingface.co/arraypress/stems-demucs) (168 MB);
 `uv run Tools/export_demucs.py --install` rebuilds it from the upstream checkpoint.
 
+**The fine-tuned bag, `htdemucs_ft`.** Four models, one fine-tuned per stem, about one dB better
+on MUSDB and four times the compute. The same code path: `stems-htdemucs_ft-float32.aimodel`
+(673 MB, same repo) carries four entry points and `DemucsSeparator` takes stem k from model k, as
+upstream's one-hot bag weights do. Each of the four is asserted equal to upstream before export;
+segments 140–147 dB, whole clips 135–147 dB on every stem. The 6-minute mix takes 127 s verified
+(2.9× realtime) against 73 s for `htdemucs`.
+
+## Four stems, best quality: BS-RoFormer
+
+`RoFormerSeparator` runs BS-RoFormer (Lu, Wang, Kong, Hung — ByteDance, ICASSP 2024; lucidrains'
+implementation, MIT) with the four-stem weights ZFTurbo trained and released under MIT: MUSDB18
+test average **9.65 dB** SDR (drums 11.6, vocals 11.1, bass 8.5, other 7.4), against about 9.0 for
+`htdemucs_ft` and 8.0 for `htdemucs`. 132M parameters. In the CLI: `--engine roformer`.
+
+The band-split transformer lives in `stems-bs_roformer-float32.aimodel` (528 MB) at the model's
+485,100-sample chunk; the STFT (n_fft 2048, hop 441, periodic Hann, unnormalised, laid out per
+frame as bin, channel, real/imaginary), the complex mask, the DC zeroing, the inverse and
+upstream's `demix` — 50% step, reflect border, linear fades dropped on the first and last batch,
+sum over count — run in Swift. The batches are replayed as upstream forms them, because the fade
+rule is per batch.
+
+| stage | result |
+|---|---|
+| the network from spectrogram to mask | asserted equal to `model(chunk)` before export |
+| spectrogram layout, masked inverse | 155 dB, 151 dB against torch |
+| each of 72 chunks through Core AI (GPU), 10 s and 6 min | 74–110 dB against upstream |
+| whole clips end to end, 10 s and 6 min | 97–114 dB on every stem |
+
+Lower than the convolutional models' 140 dB because eight layers of fp32 attention accumulate
+GPU-versus-CPU rounding — a relative error of 1e-4 on the worst chunk, 1e-5 typical, far below
+anything audible, and repeatable run to run. The same run-twice verification applies. Asset at
+[huggingface.co/arraypress/stems-roformer](https://huggingface.co/arraypress/stems-roformer);
+`Tools/export_roformer.py` rebuilds it from ZFTurbo's config and checkpoint.
+
 ## Requirements
 
 macOS 27 (Core AI for Demucs; the MDX path alone needed only 26), Swift 6.2. Core ML, Core AI and Accelerate (system frameworks); no

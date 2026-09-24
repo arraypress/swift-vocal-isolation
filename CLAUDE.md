@@ -45,6 +45,30 @@ The package floor is macOS 27 (Core AI); MDX via Core ML still works there.
   run — `recomputedSegments` counts them. Model time is only 0.7 s of the
   2.3 s per segment (STFT 0.25 s, iSTFT 4 × 0.34 s before caching the
   envelope), so verification costs ~30%.
+- **Two Core AI jobs on the GPU at once break verification.** With the
+  RoFormer parity test running in another process, both Demucs engines on a
+  3-minute track threw "three runs disagreed" — under contention runs stop
+  agreeing at all. Verification now tries up to 5 runs and reports the
+  pairwise PSNR spread in the error (float noise ≥120 dB = not repeatable
+  under load; 60–110 dB = the wrong-segment fault). Do not run two
+  separations concurrently; queue them.
+- **`htdemucs_ft`**: a `BagOfModels` with ONE-HOT weights — stem k comes from
+  model k, so the asset has `model0…model3` entry points and the separator
+  runs all four per segment (verification per model run). Same STFT and
+  chunking. 2.9× realtime verified on the release CLI.
+- **BS-RoFormer** (`RoFormerSeparator`, `RoFormerSTFT`): n_fft 2048, hop 441,
+  NOT normalised, Nyquist kept, DC zeroed after the mask (`zero_dc`); the
+  model input is 'b t (f s c)' — bin-major, then channel, then re/im —
+  and the mask comes back in the same layout. `demix` generic mode:
+  chunk 485,100, `num_overlap` 2 (step 242,550), fade chunk/10, border =
+  chunk − step reflect-padded when length > 2·border, chunks shorter than
+  half a chunk are zero-padded (else reflect), the fade rule is decided PER
+  BATCH of `batch_size` 2 (first batch keeps fade-in only if it holds one
+  chunk; the last batch drops the fade-out), `result/counter` with NaN → 0.
+  Config values are read from the YAML, not the model defaults (defaults say
+  hop 512, overlap 4). Core AI converted the transformer as is (RoPE, SDPA,
+  RMSNorm via F.normalize, GLU) — no re-authoring; 96–110 dB per chunk is
+  what eight layers of fp32 attention on the GPU give.
 - Test fixtures under `Fixtures/Demucs/` are reached with
   `Bundle.module.url(..., subdirectory: "Demucs")` — the `.copy` keeps the
   folder name, not the `Fixtures/` prefix.

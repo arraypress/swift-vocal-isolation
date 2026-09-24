@@ -266,4 +266,40 @@ struct DemucsTests {
         }
         print("DEMUCS faults over \(passes) passes × \(inputs.count) chunks: \(faults.count) — \(faults.joined(separator: ", "))")
     }
+
+    // MARK: - The fine-tuned bag
+
+    private func installedBag() -> URL? {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("stems").appendingPathComponent(DemucsSeparator.assetName(forVariant: "htdemucs_ft"))
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// htdemucs_ft: four models, stem k from model k, against references from `export_demucs.py --name htdemucs_ft`.
+    @Test func bagMatchesUpstream() async throws {
+        guard let refs = ProcessInfo.processInfo.environment["STEMS_DEMUCS_REFS_FT"], let asset = installedBag() else { return }
+        let separator = try await DemucsSeparator(contentsOf: asset)
+        #expect(separator.isBag)
+        let L = DemucsSeparator.segment
+        for clip in ["demo", "kit"] where FileManager.default.fileExists(atPath: "\(refs)/\(clip)/chunk_mix.f32") {
+            let mix = try floats(at: "\(refs)/\(clip)/chunk_mix.f32")
+            let stems = try await separator.separateSegment([Array(mix[0..<L]), Array(mix[L..<(2 * L)])])
+            let reference = try floats(at: "\(refs)/\(clip)/chunk_out.f32")
+            let db = psnr(reference, stems.flatMap { $0.flatMap { $0 } })
+            print("DEMUCS ft segment (\(clip)) PSNR \(db) dB")
+            #expect(db > 60)
+        }
+        for clip in ["demo", "kit"] where FileManager.default.fileExists(atPath: "\(refs)/\(clip)/stems.f32") {
+            let (channels, _) = try VocalIsolator.readAudio(URL(fileURLWithPath: "\(refs)/\(clip)/audio_44k.wav"))
+            let stems = try await separator.separateAt44k([channels[0], channels[1]])
+            let reference = try floats(at: "\(refs)/\(clip)/stems.f32")
+            let n = channels[0].count
+            for (s, name) in DemucsSeparator.sources.enumerated() {
+                let db = psnr(Array(reference[(s * 2 * n)..<((s + 1) * 2 * n)]), stems[s][0] + stems[s][1])
+                print("DEMUCS ft \(clip) \(name): PSNR \(db) dB")
+                #expect(db > 60, "\(clip) \(name)")
+            }
+            print("DEMUCS ft \(clip): verification recomputed \(separator.recomputedSegments) model run(s)")
+        }
+    }
 }

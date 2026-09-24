@@ -40,7 +40,12 @@ name = args.name
 clips = dict(a.split("=", 1) for a in args.clips)
 
 bag = get_model(name); bag.eval()
-model = bag.models[0]; model.eval()
+models = list(bag.models)
+if len(models) > 1:
+    for k, w in enumerate(bag.weights):
+        assert w == [1.0 if i == k else 0.0 for i in range(len(w))], f"bag weights are not one-hot: {bag.weights}"
+    print(f"{name}: a bag of {len(models)} models, stem k from model k", flush=True)
+model = models[0]; model.eval()
 L = int(model.segment * model.samplerate); hl = model.hop_length; nfft = model.nfft
 le = int(math.ceil(L / hl)); Fq = nfft // 2; S_ = len(model.sources)
 print(f'{name}: sources {model.sources}, segment {L} samples, frames {le}, freqs {Fq}, params {sum(p.numel() for p in model.parameters())/1e6:.1f} M', flush=True)
@@ -96,6 +101,7 @@ class Core(torch.nn.Module):
         return x.reshape(B, Sn * 4, Fq_, T), xt.reshape(B, Sn * 2, L)
 
 core = Core(model).eval()
+cores = [Core(m).eval() for m in models]
 def stats_of(mix, mag):
     return torch.stack([mag.mean(), mag.std(), mix.mean(), mix.std()])
 
@@ -122,6 +128,9 @@ for cname, path in clips.items():
         spec_out, time_out = core(chunk, mag, stats)
         ours = finish(spec_out, time_out)
         theirs = model(chunk)
+        if len(models) > 1:
+            theirs = torch.stack([models[k](chunk)[:, k] for k in range(len(models))], dim=1)
+            ours = torch.stack([finish(*cores[k](chunk, mag, stats))[:, k] for k in range(len(models))], dim=1)
     print(f'  {cname}: Core+mask/ispec vs model(chunk): max |diff| {(ours - theirs).abs().max():.2e} (equal: {torch.equal(ours, theirs)})', flush=True)
     if not (d / 'stems.f32').exists():
         sep = Separator(model=name, shifts=0, overlap=0.25, split=True, device='cpu', progress=False)
@@ -150,15 +159,17 @@ print('stft fixtures: mag', tuple(ms.shape), 'ispec', tuple(back.shape), flush=T
 t0 = time.time()
 mix_ex = torch.randn(1, 2, L); mag_ex = torch.randn(1, 4, Fq, le); stats_ex = torch.tensor([0., 1., 0., 1.])
 with torch.no_grad():
-    ex = torch.export.export(core, (mix_ex, mag_ex, stats_ex)).run_decompositions(coreai_torch.get_decomp_table())
-print(f'exported: {sum(1 for n in ex.graph.nodes if n.op == "call_function")} ops in {time.time()-t0:.0f} s', flush=True)
+    exports = [torch.export.export(c, (mix_ex, mag_ex, stats_ex)).run_decompositions(coreai_torch.get_decomp_table()) for c in cores]
+print(f'exported {len(exports)} program(s) in {time.time()-t0:.0f} s', flush=True)
 converter = coreai_torch.TorchConverter(mode=coreai_torch.TorchConverter.Mode.RELEASE)
-converter.add_exported_program(ex, input_names=['mix', 'mag', 'stats'], output_names=['spec', 'time'], entrypoint_name='main')
+for k, ex in enumerate(exports):
+    converter.add_exported_program(ex, input_names=['mix', 'mag', 'stats'], output_names=['spec', 'time'],
+                                   entrypoint_name='main' if len(exports) == 1 else f'model{k}')
 program = converter.to_coreai(); program.optimize()
 meta = AIModelAssetMetadata()
 meta.author = 'Rouard, Massa, Défossez (Meta) — Hybrid Transformer Demucs; Core AI export by VocalIsolation'
 meta.license = 'MIT'
-meta.model_description = f'HTDemucs {name}: sources {model.sources}; main = (mix [1,2,{L}] normalised, cac spectrogram [1,4,{Fq},{le}]) → (spec [1,{S_*4},{Fq},{le}] complex-as-channels stems, time [1,{S_*2},{L}]); STFT/iSTFT/chunking in the host.'
+meta.model_description = f'HTDemucs {name}: sources {model.sources}; ' + ('main' if len(models) == 1 else f'model0…model{len(models)-1} (a bag: stem k from model k)') + f' = (mix [1,2,{L}] normalised, cac spectrogram [1,4,{Fq},{le}], per-segment stats [4]) → (spec [1,{S_*4},{Fq},{le}] complex-as-channels stems, time [1,{S_*2},{L}]); STFT/iSTFT/chunking in the host.'
 meta.creation_date = int(time.time())
 out = Path(args.out) / f'stems-{name}-float32.aimodel'
 out.parent.mkdir(parents=True, exist_ok=True)

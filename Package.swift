@@ -21,6 +21,7 @@ let package = Package(
             dependencies: ["VocalIsolation"],
             resources: [
                 .copy("Fixtures/Demucs"),
+                .copy("Fixtures/RoFormer"),
                 .copy("Fixtures/stft_audio.bin"),
                 .copy("Fixtures/stft_spec.bin"),
                 .copy("Fixtures/stft_recon.bin"),
