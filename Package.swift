@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VocalIsolation",
     platforms: [
-        .macOS(.v26),
+        .macOS("27.0"),
         .iOS(.v26),
     ],
     products: [
@@ -20,6 +20,7 @@ let package = Package(
             name: "VocalIsolationTests",
             dependencies: ["VocalIsolation"],
             resources: [
+                .copy("Fixtures/Demucs"),
                 .copy("Fixtures/stft_audio.bin"),
                 .copy("Fixtures/stft_spec.bin"),
                 .copy("Fixtures/stft_recon.bin"),

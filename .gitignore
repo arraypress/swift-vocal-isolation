@@ -15,3 +15,7 @@ Tools/*.npy
 Tools/.venv/
 Tools/__pycache__/
 Tools/mel_band_roformer.mlpackage/
+
+# Model exports and upstream references are made locally
+Tools/exports/
+Tools/reference/

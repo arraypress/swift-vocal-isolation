@@ -11,6 +11,10 @@ import Foundation
 
 /// Errors from vocal isolation.
 public enum VocalIsolationError: Error {
+    /// No model at the path given (Demucs).
+    case modelNotFound(String)
+    /// The Core AI asset would not load, lacks its entry point, or returned nothing (Demucs).
+    case modelUnavailable(String)
     case modelLoadFailed
     case dspSetupFailed
     case predictionFailed

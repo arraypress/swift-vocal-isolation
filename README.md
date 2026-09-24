@@ -50,9 +50,44 @@ music. Very dense rock/metal (walls of distorted guitar overlapping the vocal
 band) is its ceiling — for a no-compromise result there, a Mel-Band Roformer is
 higher quality, at a much larger model and a harder Core ML conversion.
 
+## Four stems: Hybrid Transformer Demucs
+
+`DemucsSeparator` runs Meta's HTDemucs (`htdemucs`, MIT, 42M parameters) on Core AI and returns
+drums, bass, other and vocals. The MDX model above stays the better vocal/instrumental split;
+Demucs is for the stems it cannot give — a bass or drum stem for transcription, for instance.
+
+```swift
+let separator = try await DemucsSeparator(contentsOf: assetURL)      // stems-htdemucs-float32.aimodel
+let stems = try await separator.separate(channels, sampleRate: 44_100)
+stems["bass"]   // [[Float]] (L, R), in DemucsSeparator.sources order under stems.stems
+```
+
+**How it is applied is upstream's, line for line.** Core AI has no STFT and no variance op, so
+the asset holds the network between the complex spectrogram and the mask at the model's
+7.8-second training segment, and Swift does the rest exactly as `demucs.api.Separator` and
+`apply_model` do: the global normalisation by the mono mix, chunks at a 75% stride, the
+triangular overlap-add weights, the centred padding of the last chunk and its centre trim, and
+the per-segment statistics the model computes on its input. Random shifts (`shifts=1` upstream)
+are off: they make upstream itself non-deterministic, and parity needs a fixed answer.
+
+Held to upstream's Python (`Tools/export_demucs.py` writes the references, `DemucsTests` reads
+them from `STEMS_DEMUCS_REFS`):
+
+| stage | result |
+|---|---|
+| the network from spectrogram to mask | asserted equal to `model(mix)` before export |
+| STFT and inverse STFT | 154 dB PSNR against torch |
+| one training segment through Core AI (GPU) | 136–147 dB against upstream's output |
+| every one of 63 chunks of a 6-minute mix | worst stem 110 dB |
+| whole clips end to end, 10 s and 6 min | 127–148 dB on every stem |
+
+So the stems are upstream's to the float noise floor. The asset is published at
+[huggingface.co/arraypress/stems-demucs](https://huggingface.co/arraypress/stems-demucs) (168 MB);
+`uv run Tools/export_demucs.py --install` rebuilds it from the upstream checkpoint.
+
 ## Requirements
 
-macOS 26 / iOS 26, Swift 6.2. Core ML + Accelerate (system frameworks); no
+macOS 27 (Core AI for Demucs; the MDX path alone needed only 26), Swift 6.2. Core ML, Core AI and Accelerate (system frameworks); no
 external Swift dependencies. On-device — nothing leaves the device.
 
 ## Tests
