@@ -1,8 +1,10 @@
 # CLAUDE.md — swift-vocal-isolation
 
-Two separators. `VocalIsolator`: MDX-Net vocal/instrumental via Core ML (the
-original, measured better on vocals). `DemucsSeparator`: HTDemucs four stems
-via Core AI (added 2026-09-24). Module `VocalIsolation`; the CLI is
+Separators. `MDXSeparator`: MDX23C vocal/instrumental on Core AI, float16,
+exported from UVR's InstVoc_HQ checkpoint by `Tools/export_mdx.py` (added
+2026-10-10). `VocalIsolator`: the same network as the old 8-bit Core ML
+package (sync). `DemucsSeparator`: HTDemucs four stems via Core AI (added
+2026-09-24). Module `VocalIsolation`; the CLI is
 `../swift-stems-cli` (binary `stems`). What a re-derivation would get wrong:
 
 ## Build & test
@@ -14,6 +16,16 @@ Model-backed Demucs tests need the asset installed at
 `~/Library/Application Support/stems/stems-htdemucs-float32.aimodel` and a
 references folder from `uv run Tools/export_demucs.py demo=clip.wav …`.
 The package floor is macOS 27 (Core AI); MDX via Core ML still works there.
+
+## MDX on Core AI (measured 2026-10-10)
+- **Separate type, not an async overload.** With `separate` both sync and
+  async on `VocalIsolator`, Swift picked the SYNC one under `await` and the
+  Core ML path threw. `MDXSeparator` shares `ChunkPlan`/`chunkSpectrogram`.
+- **Provenance**: the old `mdx_net.mlpackage` was never documented; it is
+  InstVoc_HQ at 8 bits (35.3 dB to the float32 network). Export float16 with
+  `--precision float16` — DON'T run torch half on the CPU (a 30-min hang).
+- float16 asset: 62.6 dB/chunk to torch, 46.9 dB end-to-end to the Python
+  reference, 0.27 s/chunk; 8 repeats bit-identical (no Demucs-style faults).
 
 ## Demucs traps (all measured)
 - **Core AI has no STFT and no `aten.var`.** The export takes the network

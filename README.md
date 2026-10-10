@@ -2,14 +2,14 @@
 
 On-device **vocal / instrumental separation** for Swift — split a song into a
 clean vocal stem and its instrumental, entirely on-device (no cloud, no upload).
-MDX-Net runs in Core ML; the STFT/ISTFT and chunked overlap-add run on
-Accelerate/vDSP.
+MDX-Net runs in Core AI (`MDXSeparator`) or Core ML (`VocalIsolator`); the
+STFT/ISTFT and chunked overlap-add run on Accelerate/vDSP.
 
 ```swift
 import VocalIsolation
 
-let isolator = try VocalIsolator(modelURL: modelURL)
-let stems = try isolator.separate(contentsOf: songURL)
+let separator = try await MDXSeparator(contentsOf: assetURL)   // stems-mdx23c-instvoc-float16.aimodel
+let stems = try await separator.separate(contentsOf: songURL)
 try VocalIsolator.writeWAV(stems.vocal,        sampleRate: stems.sampleRate, to: vocalURL)
 try VocalIsolator.writeWAV(stems.instrumental, sampleRate: stems.sampleRate, to: instURL)
 ```
@@ -40,10 +40,23 @@ under a minute).
 
 ## The model
 
-The MDX-Net model (MDX23C, MIT — credit [UVR](https://github.com/anjok07/ultimatevocalremovergui))
-is **not bundled** — it's ~214 MB (fp16). Point `VocalIsolator(modelURL:)` at a
-local `.mlpackage`/`.mlmodelc`, or fetch it once and cache it (like Whisper
-weights). It's 44.1 kHz native, and outputs 2 stems (vocal, other).
+UVR's **MDX23C-8KFFT-InstVoc_HQ** (MDX23C, MIT — credit
+[UVR](https://github.com/anjok07/ultimatevocalremovergui)), 112 M parameters, 44.1 kHz,
+two stems (vocal, instrumental). It is **not bundled**; it comes in two forms:
+
+| | `MDXSeparator` — Core AI, float16 | `VocalIsolator` — Core ML, 8-bit |
+|---|---|---|
+| file | `stems-mdx23c-instvoc-float16.aimodel`, 214 MB | `mdx_net.mlpackage`, 107 MB |
+| one chunk vs torch float32 | 62.6 dB | 35.3 dB |
+| vocal vs the Python reference (test) | 46.9 dB | > 30 dB |
+| a 30 s mix | 3.0 s | 6.9 s |
+| vocal / instrumental SDR, 3 mixes with a known vocal | same to 0.01 dB | baseline |
+
+All measured on this machine (macOS 27, Apple silicon). The Core AI asset is made from the
+original checkpoint by `Tools/export_mdx.py` (`--precision float16`); the run proves the
+exported network equals upstream's `model(chunk)` exactly, and that the old package is this
+network at 8 bits (35 dB to it — a different network would be near 0). Repeated Core AI runs
+are bit-for-bit identical.
 
 **Quality note:** MDX-Net is strong on pop / hip-hop / EDM / most vocal-forward
 music. Very dense rock/metal (walls of distorted guitar overlapping the vocal
