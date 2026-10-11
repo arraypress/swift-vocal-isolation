@@ -18,9 +18,10 @@
 
 import CoreAI
 import Foundation
+import os
 
 /// Four stems from a stereo mix, with HTDemucs.
-public final class DemucsSeparator: @unchecked Sendable {
+public final class DemucsSeparator: Sendable {
 
     /// The asset name the export writes and the installer expects, for the default variant.
     public static let assetName = "stems-htdemucs-float32.aimodel"
@@ -75,7 +76,8 @@ public final class DemucsSeparator: @unchecked Sendable {
     public let verifying: Bool
 
     /// How many segments verification caught and recomputed, for reporting.
-    public private(set) var recomputedSegments = 0
+    public var recomputedSegments: Int { recomputed.withLock { $0 } }
+    private let recomputed = OSAllocatedUnfairLock(initialState: 0)
 
     public init(contentsOf url: URL, computeUnit: ComputeUnit = .gpu, verifying: Bool = true) async throws {
         guard FileManager.default.fileExists(atPath: url.path) else { throw VocalIsolationError.modelNotFound(url.path) }
@@ -203,7 +205,7 @@ public final class DemucsSeparator: @unchecked Sendable {
         for attempt in 1..<Self.verificationAttempts {
             let next = try await network(function, mix: mix, mag: mag, frames: frames, stats: stats)
             if let match = runs.first(where: { $0.spec == next.spec && $0.time == next.time }) {
-                if attempt > 1 { recomputedSegments += 1 }
+                if attempt > 1 { recomputed.withLock { $0 += 1 } }
                 return match
             }
             runs.append(next)

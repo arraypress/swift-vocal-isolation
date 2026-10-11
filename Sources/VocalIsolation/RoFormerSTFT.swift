@@ -14,9 +14,10 @@
 
 import Accelerate
 import Foundation
+import os
 
 /// The spectrogram BS-RoFormer sees, and the inverse of its masked output.
-final class RoFormerSTFT {
+final class RoFormerSTFT: Sendable {
 
     static let nFFT = 2048
     static let hop = 441
@@ -27,9 +28,10 @@ final class RoFormerSTFT {
 
     private let window: [Float]
     private let windowSq: [Float]
-    private let fwd: vDSP_DFT_Setup
-    private let inv: vDSP_DFT_Setup
-    private var envelopes: [Int: [Float]] = [:]
+    private let fwd: DFTSetup
+    private let inv: DFTSetup
+    /// Shared by separations running at once, hence the lock.
+    private let envelopes = OSAllocatedUnfairLock<[Int: [Float]]>(initialState: [:])
 
     init?() {
         var w = [Float](repeating: 0, count: Self.nFFT)
@@ -38,10 +40,10 @@ final class RoFormerSTFT {
         windowSq = w.map { $0 * $0 }
         guard let f = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(Self.nFFT), .FORWARD),
               let i = vDSP_DFT_zop_CreateSetup(f, vDSP_Length(Self.nFFT), .INVERSE) else { return nil }
-        fwd = f; inv = i
+        fwd = DFTSetup(raw: f); inv = DFTSetup(raw: i)
     }
 
-    deinit { vDSP_DFT_DestroySetup(inv); vDSP_DFT_DestroySetup(fwd) }
+    deinit { vDSP_DFT_DestroySetup(inv.raw); vDSP_DFT_DestroySetup(fwd.raw) }
 
     /// 1 + samples / hop, torch.stft's frame count with centre padding.
     static func frames(forSamples count: Int) -> Int { 1 + count / hop }
@@ -63,7 +65,7 @@ final class RoFormerSTFT {
                 padded.withUnsafeBufferPointer { pp in
                     for t in 0..<frames {
                         vDSP_vmul(pp.baseAddress! + t * Self.hop, 1, window, 1, &frameReal, 1, vDSP_Length(Self.nFFT))
-                        vDSP_DFT_Execute(fwd, frameReal, frameImag, &outR, &outI)
+                        vDSP_DFT_Execute(fwd.raw, frameReal, frameImag, &outR, &outI)
                         let base = t * Self.width
                         for f in 0..<Self.bins {
                             let k = base + (f * Self.channels + ch) * 2
@@ -79,15 +81,16 @@ final class RoFormerSTFT {
     // MARK: - Inverse
 
     private func envelope(frames: Int, paddedLen: Int) -> [Float] {
-        if let cached = envelopes[frames] { return cached }
+        if let cached = envelopes.withLock({ $0[frames] }) { return cached }
         var envelope = [Float](repeating: 0, count: paddedLen)
         envelope.withUnsafeMutableBufferPointer { ep in
             for t in 0..<frames {
                 vDSP_vadd(ep.baseAddress! + t * Self.hop, 1, windowSq, 1, ep.baseAddress! + t * Self.hop, 1, vDSP_Length(Self.nFFT))
             }
         }
-        envelopes[frames] = envelope
-        return envelope
+        let made = envelope
+        envelopes.withLock { $0[frames] = made }
+        return made
     }
 
     /// Upstream's tail for one stem: complex mask × spectrogram (same `[frames][width]`
@@ -124,7 +127,7 @@ final class RoFormerSTFT {
                             }
                             if zeroDC { fullR[0] = 0; fullI[0] = 0 }
                             for k in Self.bins..<Self.nFFT { fullR[k] = fullR[Self.nFFT - k]; fullI[k] = -fullI[Self.nFFT - k] }
-                            vDSP_DFT_Execute(inv, fullR, fullI, &timeR, &timeI)
+                            vDSP_DFT_Execute(inv.raw, fullR, fullI, &timeR, &timeI)
                             vDSP_vmul(timeR, 1, scaledWindow, 1, &tmp, 1, vDSP_Length(Self.nFFT))
                             vDSP_vadd(rp.baseAddress! + t * Self.hop, 1, tmp, 1, rp.baseAddress! + t * Self.hop, 1, vDSP_Length(Self.nFFT))
                         }

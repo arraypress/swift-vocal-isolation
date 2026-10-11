@@ -15,6 +15,11 @@ let package = Package(
         .library(name: "VocalIsolation", targets: ["VocalIsolation"]),
     ],
     targets: [
+        // NonisolatedNonsendingByDefault is deliberately OFF here, unlike the
+        // network libraries: under it an async `separate` called from the main
+        // actor would run seconds of STFT and chunking on the main thread.
+        // Compute-heavy async work belongs on the global pool, which is what
+        // plain nonisolated async already gives.
         .target(name: "VocalIsolation"),
         .testTarget(
             name: "VocalIsolationTests",

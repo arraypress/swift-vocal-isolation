@@ -18,7 +18,7 @@ import Foundation
 /// in 0.31 s, the 8-bit Core ML package it replaces 35.3 dB in 0.74 s. Repeated
 /// runs are bit-for-bit identical — none of the wrong segments Demucs shows — and
 /// on three 30 s mixes with a known vocal all three scored the same to 0.01 dB.
-final class VocalModelCoreAI: @unchecked Sendable {
+struct VocalModelCoreAI: Sendable {
 
     private let function: InferenceFunction
 

@@ -17,9 +17,10 @@
 
 import Accelerate
 import Foundation
+import os
 
 /// The spectrogram HTDemucs sees, and the way back.
-final class DemucsSTFT {
+final class DemucsSTFT: Sendable {
 
     static let nFFT = 4096
     static let hop = 1024
@@ -30,8 +31,8 @@ final class DemucsSTFT {
 
     private let window: [Float]
     private let windowSq: [Float]
-    private let fwd: vDSP_DFT_Setup
-    private let inv: vDSP_DFT_Setup
+    private let fwd: DFTSetup
+    private let inv: DFTSetup
 
     init?() {
         var w = [Float](repeating: 0, count: Self.nFFT)
@@ -40,10 +41,10 @@ final class DemucsSTFT {
         windowSq = w.map { $0 * $0 }
         guard let f = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(Self.nFFT), .FORWARD),
               let i = vDSP_DFT_zop_CreateSetup(f, vDSP_Length(Self.nFFT), .INVERSE) else { return nil }
-        fwd = f; inv = i
+        fwd = DFTSetup(raw: f); inv = DFTSetup(raw: i)
     }
 
-    deinit { vDSP_DFT_DestroySetup(inv); vDSP_DFT_DestroySetup(fwd) }
+    deinit { vDSP_DFT_DestroySetup(inv.raw); vDSP_DFT_DestroySetup(fwd.raw) }
 
     /// ⌈samples / hop⌉: the frames `_spec` returns for a signal of that length.
     static func frames(forSamples count: Int) -> Int { (count + hop - 1) / hop }
@@ -74,7 +75,7 @@ final class DemucsSTFT {
                         // Frames 0 and 1 and the last two of the full STFT are discarded.
                         let start = (frame + 2) * Self.hop
                         vDSP_vmul(pp.baseAddress! + start, 1, window, 1, &frameReal, 1, vDSP_Length(Self.nFFT))
-                        vDSP_DFT_Execute(fwd, frameReal, frameImag, &outR, &outI)
+                        vDSP_DFT_Execute(fwd.raw, frameReal, frameImag, &outR, &outI)
                         var s = scale
                         vDSP_vsmul(outR, 1, &s, &outR, 1, vDSP_Length(Self.bins))
                         vDSP_vsmul(outI, 1, &s, &outI, 1, vDSP_Length(Self.bins))
@@ -91,11 +92,12 @@ final class DemucsSTFT {
 
     // MARK: - Inverse
 
-    /// The overlap-added window-square envelope for a frame count, shared by every stem and channel.
-    private var envelopes: [Int: [Float]] = [:]
+    /// The overlap-added window-square envelope for a frame count, shared by
+    /// every stem and channel — and by separations running at once, hence the lock.
+    private let envelopes = OSAllocatedUnfairLock<[Int: [Float]]>(initialState: [:])
 
     private func envelope(frames total: Int, paddedLen: Int) -> [Float] {
-        if let cached = envelopes[total] { return cached }
+        if let cached = envelopes.withLock({ $0[total] }) { return cached }
         var envelope = [Float](repeating: 0, count: paddedLen)
         envelope.withUnsafeMutableBufferPointer { ep in
             for frame in 0..<total {
@@ -103,8 +105,9 @@ final class DemucsSTFT {
                 vDSP_vadd(ep.baseAddress! + off, 1, windowSq, 1, ep.baseAddress! + off, 1, vDSP_Length(Self.nFFT))
             }
         }
-        envelopes[total] = envelope
-        return envelope
+        let made = envelope
+        envelopes.withLock { $0[total] = made }
+        return made
     }
 
     /// `_mask` (cac → complex) then `_ispec`: one stem's `[4][bins][frames]` → stereo of `length` samples.
@@ -140,7 +143,7 @@ final class DemucsSTFT {
                         }
                         fullR[Self.bins] = 0; fullI[Self.bins] = 0            // Nyquist, zero-padded upstream
                         for k in (Self.bins + 1)..<Self.nFFT { fullR[k] = fullR[Self.nFFT - k]; fullI[k] = -fullI[Self.nFFT - k] }
-                        vDSP_DFT_Execute(inv, fullR, fullI, &timeR, &timeI)
+                        vDSP_DFT_Execute(inv.raw, fullR, fullI, &timeR, &timeI)
                         vDSP_vmul(timeR, 1, scaledWindow, 1, &tmp, 1, vDSP_Length(Self.nFFT))
                         vDSP_vadd(rp.baseAddress! + off, 1, tmp, 1, rp.baseAddress! + off, 1, vDSP_Length(Self.nFFT))
                     }

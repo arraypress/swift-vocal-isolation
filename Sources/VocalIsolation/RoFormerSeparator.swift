@@ -16,9 +16,10 @@
 
 import CoreAI
 import Foundation
+import os
 
 /// Four stems from a stereo mix, with BS-RoFormer.
-public final class RoFormerSeparator: @unchecked Sendable {
+public final class RoFormerSeparator: Sendable {
 
     public static let assetName = "stems-bs_roformer-float32.aimodel"
     public static let sampleRate = 44_100.0
@@ -42,7 +43,9 @@ public final class RoFormerSeparator: @unchecked Sendable {
 
     public let url: URL
     public let verifying: Bool
-    public private(set) var recomputedChunks = 0
+    /// How many chunks verification caught and recomputed, for reporting.
+    public var recomputedChunks: Int { recomputed.withLock { $0 } }
+    private let recomputed = OSAllocatedUnfairLock(initialState: 0)
     private let function: InferenceFunction
     private let stft: RoFormerSTFT
 
@@ -156,7 +159,7 @@ public final class RoFormerSeparator: @unchecked Sendable {
             for attempt in 1..<DemucsSeparator.verificationAttempts {
                 let next = try await network(spec, frames: frames)
                 if let match = runs.first(where: { $0 == next }) {
-                    if attempt > 1 { recomputedChunks += 1 }
+                    if attempt > 1 { recomputed.withLock { $0 += 1 } }
                     mask = match; agreed = true; break
                 }
                 runs.append(next)
